@@ -277,6 +277,15 @@ export async function createPrompt(promptData: PromptInput): Promise<Prompt> {
 
 // 更新提示词
 export async function updatePrompt(id: string, promptData: PromptInput): Promise<Prompt> {
+  // 添加参数验证
+  if (!id || id.trim() === '') {
+    throw new Error('更新提示词时缺少有效的ID');
+  }
+  
+  if (!promptData.title || !promptData.content) {
+    throw new Error('更新提示词时标题和内容不能为空');
+  }
+
   const currentDb = await ensureDbInitialized();
   const now = new Date().toISOString();
 
@@ -405,9 +414,10 @@ export async function getAllTags(): Promise<Tag[]> {
 export async function updatePromptLastUsed(id: string): Promise<boolean> {
   const currentDb = await ensureDbInitialized();
   try {
+    const now = new Date().toISOString(); // 使用ISO格式的时间戳
     const result = await currentDb.execute(
-      'UPDATE prompts SET last_used_at = CURRENT_TIMESTAMP WHERE id = $1',
-      [id]
+      'UPDATE prompts SET last_used_at = $1 WHERE id = $2',
+      [now, id]
     );
     console.log(`Updated last_used_at for prompt ${id}, rows affected: ${result.rowsAffected}`);
 
@@ -554,5 +564,288 @@ export async function deleteTag(id: string): Promise<boolean> {
       console.error("Stack trace:", error.stack);
     }
     throw error;
+  }
+}
+
+// 飞书同步相关接口
+export interface PromptRecord {
+  id: string;
+  title: string;
+  content: string;
+  tags: string; // JSON字符串形式存储标签数组
+  is_favorite: boolean;
+  created_at: string;
+  updated_at: string;
+  last_used: string | null;
+}
+
+export interface SyncResult {
+  success: boolean;
+  message: string;
+  local_created: number;
+  local_updated: number;
+  remote_created: number;
+  remote_updated: number;
+  total_processed: number;
+}
+
+/**
+ * 获取包含last_used_at字段的完整提示词数据（用于同步）
+ */
+async function getAllPromptsWithLastUsed(): Promise<Array<Prompt & { lastUsed: string | null }>> {
+  const currentDb = await ensureDbInitialized();
+
+  const result = await currentDb.select<any[]>(`SELECT * FROM prompts ORDER BY updated_at DESC`);
+  const prompts: Array<Prompt & { lastUsed: string | null }> = [];
+
+  for (const row of result) {
+    const tagsResult = await currentDb.select<any[]>(`
+      SELECT t.* 
+      FROM tags t
+      JOIN prompt_tags pt ON t.id = pt.tag_id
+      WHERE pt.prompt_id = $1
+    `, [row.id]);
+
+    prompts.push({
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      isFavorite: row.is_favorite === 1,
+      dateCreated: row.created_at,
+      dateModified: row.updated_at,
+      lastUsed: row.last_used_at, // 包含last_used_at字段
+      tags: tagsResult.map(tag => ({ id: tag.id, name: tag.name, color: tag.color }))
+    });
+  }
+
+  return prompts;
+}
+
+/**
+ * 将包含lastUsed字段的Prompt格式转换为后端PromptRecord格式
+ */
+function convertPromptWithLastUsedToRecord(prompt: Prompt & { lastUsed: string | null }): PromptRecord {
+  // 将标签数组转换为JSON字符串
+  const tagsStr = JSON.stringify(prompt.tags.map(tag => tag.name));
+  
+  return {
+    id: prompt.id,
+    title: prompt.title,
+    content: prompt.content,
+    tags: tagsStr,
+    is_favorite: prompt.isFavorite,
+    created_at: prompt.dateCreated,
+    updated_at: prompt.dateModified,
+    last_used: prompt.lastUsed || prompt.dateCreated, // 使用实际的lastUsed值，如果为空则使用创建时间
+  };
+}
+
+/**
+ * 将前端Prompt格式转换为后端PromptRecord格式
+ */
+export function convertPromptToRecord(prompt: Prompt): PromptRecord {
+  // 将标签数组转换为JSON字符串
+  const tagsStr = JSON.stringify(prompt.tags.map(tag => tag.name));
+  
+  return {
+    id: prompt.id,
+    title: prompt.title,
+    content: prompt.content,
+    tags: tagsStr,
+    is_favorite: prompt.isFavorite,
+    created_at: prompt.dateCreated,
+    updated_at: prompt.dateModified,
+    last_used: prompt.dateCreated, // 使用创建时间作为默认值，而不是null
+  };
+}
+
+/**
+ * 将后端PromptRecord格式转换为前端Prompt格式
+ */
+async function convertRecordToPrompt(record: PromptRecord): Promise<Prompt> {
+  // 解析标签JSON字符串
+  let tagNames: string[] = [];
+  try {
+    if (record.tags) {
+      tagNames = JSON.parse(record.tags);
+    }
+  } catch (e) {
+    console.warn('解析标签JSON失败:', e);
+    // 如果解析失败，尝试按逗号分割
+    tagNames = record.tags ? record.tags.split(',').map(s => s.trim()).filter(s => s) : [];
+  }
+  
+  // 查找或创建标签
+  const tags: Tag[] = [];
+  const currentDb = await ensureDbInitialized();
+  
+  for (const tagName of tagNames) {
+    if (!tagName) continue;
+    
+    // 查找现有标签
+    let tagResult = await currentDb.select<any[]>(`SELECT * FROM tags WHERE name = $1`, [tagName]);
+    
+    if (tagResult.length === 0) {
+      // 创建新标签
+      const newTagId = uuidv7();
+      const defaultColor = '#6366f1';
+      await currentDb.execute(
+        `INSERT INTO tags (id, name, color) VALUES ($1, $2, $3)`,
+        [newTagId, tagName, defaultColor]
+      );
+      tags.push({ id: newTagId, name: tagName, color: defaultColor });
+    } else {
+      const tag = tagResult[0];
+      tags.push({ id: tag.id, name: tag.name, color: tag.color });
+    }
+  }
+  
+  return {
+    id: record.id,
+    title: record.title,
+    content: record.content,
+    isFavorite: record.is_favorite,
+    dateCreated: record.created_at,
+    dateModified: record.updated_at,
+    tags: tags,
+  };
+}
+
+/**
+ * 执行飞书同步（带本地数据）
+ */
+export async function syncWithFeishu(appId: string, appSecret: string, tableUrl: string): Promise<SyncResult> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  
+  try {
+    // 获取所有本地提示词（包含last_used_at字段）
+    const localPromptsWithLastUsed = await getAllPromptsWithLastUsed();
+    console.log(`获取到本地提示词: ${localPromptsWithLastUsed.length} 条`);
+    
+    // 转换为后端格式（使用包含lastUsed字段的转换函数）
+    const localRecords = localPromptsWithLastUsed.map(convertPromptWithLastUsedToRecord);
+    
+    // 调用后端同步命令
+    const result = await invoke<SyncResult>('sync_with_local_data', {
+      appId,
+      appSecret,
+      tableUrl,
+      localPrompts: localRecords,
+    });
+    
+    console.log('同步结果:', result);
+    return result;
+  } catch (error) {
+    console.error('同步失败:', error);
+    throw error;
+  }
+}
+
+/**
+ * 处理来自后端的同步事件，创建本地记录
+ */
+export async function handleSyncCreateLocal(records: PromptRecord[]): Promise<void> {
+  console.log(`处理来自云端的新记录: ${records.length} 条`);
+  
+  const currentDb = await ensureDbInitialized();
+  
+  for (const record of records) {
+    try {
+      // 转换为前端格式
+      const prompt = await convertRecordToPrompt(record);
+      
+      // 处理last_used字段，使用云端的值或默认值
+      const lastUsedAt = record.last_used || prompt.dateCreated;
+      
+      // 插入提示词
+      await currentDb.execute(
+        `INSERT INTO prompts (id, title, content, is_favorite, created_at, updated_at, last_used_at) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          prompt.id,
+          prompt.title,
+          prompt.content,
+          prompt.isFavorite ? 1 : 0,
+          prompt.dateCreated,
+          prompt.dateModified,
+          lastUsedAt, // 使用云端的last_used值或创建时间
+        ]
+      );
+      
+      // 插入标签关联
+      for (const tag of prompt.tags) {
+        await currentDb.execute(
+          `INSERT OR IGNORE INTO prompt_tags (prompt_id, tag_id) VALUES ($1, $2)`,
+          [prompt.id, tag.id]
+        );
+      }
+      
+      console.log(`成功创建本地记录: ${prompt.title}`);
+    } catch (error) {
+      console.error(`创建本地记录失败:`, error);
+    }
+  }
+}
+
+/**
+ * 处理来自后端的同步事件，更新本地记录
+ */
+export async function handleSyncUpdateLocal(records: PromptRecord[]): Promise<void> {
+  console.log(`处理来自云端的更新记录: ${records.length} 条`);
+  
+  const currentDb = await ensureDbInitialized();
+  
+  for (const record of records) {
+    try {
+      // 转换为前端格式
+      const prompt = await convertRecordToPrompt(record);
+      
+      // 处理last_used字段，使用云端的值或保持原有值
+      const lastUsedAt = record.last_used;
+      
+      // 更新提示词（包含last_used_at字段）
+      if (lastUsedAt) {
+        await currentDb.execute(
+          `UPDATE prompts SET title = $1, content = $2, is_favorite = $3, updated_at = $4, last_used_at = $5 
+           WHERE id = $6`,
+          [
+            prompt.title,
+            prompt.content,
+            prompt.isFavorite ? 1 : 0,
+            prompt.dateModified,
+            lastUsedAt,
+            prompt.id,
+          ]
+        );
+      } else {
+        // 如果云端没有last_used_at值，则不更新该字段
+        await currentDb.execute(
+          `UPDATE prompts SET title = $1, content = $2, is_favorite = $3, updated_at = $4 
+           WHERE id = $5`,
+          [
+            prompt.title,
+            prompt.content,
+            prompt.isFavorite ? 1 : 0,
+            prompt.dateModified,
+            prompt.id,
+          ]
+        );
+      }
+      
+      // 删除旧的标签关联
+      await currentDb.execute(`DELETE FROM prompt_tags WHERE prompt_id = $1`, [prompt.id]);
+      
+      // 插入新的标签关联
+      for (const tag of prompt.tags) {
+        await currentDb.execute(
+          `INSERT OR IGNORE INTO prompt_tags (prompt_id, tag_id) VALUES ($1, $2)`,
+          [prompt.id, tag.id]
+        );
+      }
+      
+      console.log(`成功更新本地记录: ${prompt.title}`);
+    } catch (error) {
+      console.error(`更新本地记录失败:`, error);
+    }
   }
 } 

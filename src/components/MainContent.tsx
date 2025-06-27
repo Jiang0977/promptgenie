@@ -2,15 +2,17 @@ import React, { useState } from 'react';
 import Header from './Header';
 import PromptGrid from './PromptGrid';
 import PromptList from './PromptList';
-import { Prompt, updatePromptLastUsed } from '../services/db';
+import { Prompt } from '../services/db';
 
 type MainContentProps = {
   title: string;
   prompts: Prompt[];
   isLoading: boolean;
+  error: string | null;
   onFavoriteToggle: (id: string) => void;
   onEdit: (prompt: Prompt) => void;
   onDelete: (id: string) => void;
+  onCopy: (id: string) => void;
   searchTerm: string;
   onSearchChange: (term: string) => void;
 };
@@ -19,29 +21,15 @@ const MainContent: React.FC<MainContentProps> = ({
   title,
   prompts,
   isLoading,
+  error,
   onFavoriteToggle,
   onEdit,
   onDelete,
+  onCopy,
   searchTerm,
-  onSearchChange
+  onSearchChange,
 }) => {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-
-  const handleCopy = (id: string) => {
-    const prompt = prompts.find(p => p.id === id);
-    if (prompt) {
-      navigator.clipboard.writeText(prompt.content)
-        .then(() => {
-          console.log('提示词已复制到剪贴板');
-          updatePromptLastUsed(id).catch(err => {
-            console.error(`更新提示词 ${id} 的 last_used_at 失败:`, err);
-          });
-        })
-        .catch(err => {
-          console.error('复制失败:', err);
-        });
-    }
-  };
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -58,6 +46,16 @@ const MainContent: React.FC<MainContentProps> = ({
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
             <span className="ml-2 text-gray-600">加载中...</span>
           </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center h-full text-red-500">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="mb-3 text-red-400">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <p className="text-lg font-medium">出错了</p>
+            <p className="text-sm mt-1">{error}</p>
+          </div>
         ) : prompts.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-500">
             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="mb-3">
@@ -70,7 +68,7 @@ const MainContent: React.FC<MainContentProps> = ({
           <PromptGrid
             prompts={prompts}
             onFavoriteToggle={onFavoriteToggle}
-            onCopy={handleCopy}
+            onCopy={onCopy}
             onEdit={onEdit}
             onDelete={onDelete}
           />
@@ -78,7 +76,7 @@ const MainContent: React.FC<MainContentProps> = ({
           <PromptList
             prompts={prompts}
             onFavoriteToggle={onFavoriteToggle}
-            onCopy={handleCopy}
+            onCopy={onCopy}
             onEdit={onEdit}
             onDelete={onDelete}
           />

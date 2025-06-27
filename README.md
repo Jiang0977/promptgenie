@@ -1,4 +1,9 @@
-# 🪄 提示词精灵（PromptGenie）
+# �� 提示词精灵（PromptGenie） - 飞书同步增强版
+
+> **项目说明**
+> 本仓库 Fork 自 [ChrisZou/promptgenie](https://github.com/ChrisZou/promptgenie)，当前项目地址为 [https://github.com/Jiang0977/promptgenie](https://github.com/Jiang0977/promptgenie)。
+> 
+> 与原项目相比，当前版本最大的特点是深度集成了**飞书多维表格双向同步**功能，允许您将本地的提示词数据与云端表格无缝同步，实现数据备份与团队协作。
 
 一个专为懒人打造的AI提示词管理工具。  
 **常驻系统托盘，一键复制提示词，高效复用你的 AI 灵感。**
@@ -17,6 +22,7 @@
 - 🧠 **收藏功能**：收藏你最喜欢、最常用的提示词
 - 🏷 **标签管理**：使用标签灵活组织、查找不同类型的提示词  
 - 🔍 **快捷搜索**：快速定位关键词或标签  
+- ☁️ **飞书同步**：与飞书多维表格双向同步，实现云端备份与协作。
 
 ---
 
@@ -30,17 +36,12 @@ APP主界面
 
 ---
 
-## 📦 下载与安装
+## 📦 安装
 
-> 当前版本支持 macOS和Windows
-
-### 👉 [点击下载MacOS最新版](https://witness-1252789080.cos.ap-shanghai.myqcloud.com/promptgenie/downloads/%E6%8F%90%E7%A4%BA%E8%AF%8D%E7%B2%BE%E7%81%B5_0.1.0.dmg)
-### 👉 [点击下载Windows最新版](https://witness-1252789080.cos.ap-shanghai.myqcloud.com/promptgenie/downloads/%E6%8F%90%E7%A4%BA%E8%AF%8D%E7%B2%BE%E7%81%B5_0.1.0.exe)
-
-或手动构建：
+本项目需要手动从源码构建。
 
 ```bash
-git clone https://github.com/chriszou/promptgenie.git
+git clone https://github.com/Jiang0977/promptgenie.git
 cd promptgenie
 pnpm install
 pnpm tauri build
@@ -69,35 +70,41 @@ pnpm tauri dev
 - 所有提示词存储在本地 SQLite 数据库中（首次启动自动创建）
 - 使用 `sqlx` + migration 自动管理表结构
 
----
+### 飞书同步设置
 
-## 🧾 开源说明
+本应用支持将提示词数据与飞书多维表格进行双向同步。如果你是开发者，并希望在本地环境中测试此功能，请按照以下步骤操作：
 
-### 关于提示词精灵
+**第一步：创建飞书应用**
 
-**提示词精灵（PromptGenie）是一款 macOS 上的系统级提示词管理工具**，由 [创哥](https://www.xiaohongshu.com/user/profile/58a6796a5e87e77c148a64ae) 开发，专为 AI 工具的重度使用者打造。它常驻在系统托盘，支持查看、收藏、分组、搜索和一键复制提示词，帮助你更高效地使用 ChatGPT、Midjourney、Claude 等 AI 工具。
+1.  访问 [飞书开放平台](https://open.feishu.cn/app) 并创建一个**企业自建应用**。
+2.  在应用的"凭证与基础信息"页面，获取 `App ID` 和 `App Secret`。
+3.  在"权限管理"页面，确保为应用开通以下权限，否则同步将失败：
+    *   `bitable:app:readonly` - 查看多维表格
+    *   `bitable:app:readwrite` - 编辑多维表格
 
-提示词精灵 是我在做 [Together]( https://togetheryiqi.com/download/app)（一款围绕执行力打造的行为辅助类 App）过程中开发的配套工具，服务于 AI 创作过程中的「输入效率」场景。
+**第二步：创建多维表格**
 
----
+1.  访问 [飞书多维表格](https://bytedance.feishu.cn/base) 并创建一个新的表格。
+2.  **关键：** 确保表格包含以下字段，且字段名和类型必须完全匹配。建议直接复制字段名以避免错误。
+    *   `id` (类型: **文本**) - 用于存储记录的唯一ID，建议设为**主字段**。
+    *   `title` (类型: **文本**)
+    *   `content` (类型: **多行文本**)
+    *   `tags` (类型: **文本**) - 用于存储JSON格式的标签数组。
+    *   `isFavorite` (类型: **单选**) - 选项必须包含 `"是"` 和 `"否"`。
+    *   `createdAt` (类型: **日期**)
+    *   `updatedAt` (类型: **日期**) - 同步冲突解决的关键字段。
+    *   `lastUsed` (类型: **日期**)
 
-### 为什么开源？
+**第三步：在应用内配置**
 
-选择开源提示词精灵，是因为我相信：
+1.  运行 PromptGenie 应用，进入"设置"页面。
+2.  在"飞书云同步"区域，准确填写以下信息：
+    *   **飞书 App ID**：来自第一步。
+    *   **飞书 App Secret**：来自第一步。
+    *   **飞书多维表格 URL**：从你创建的多维表格页面复制浏览器地址栏中的完整 URL。
+3.  点击"保存配置"，然后点击"测试连接"进行验证。
 
-- 🚀 **高效工作，值得被分享**  
-- 🛠️ **欢迎一起打磨工具**  
-- 📣 **帮助更多人，更加充分的利用AI的力量，强大自己，丰富世界**
-
----
-
-### 开源协议
-
-本项目使用 **MIT License** 开源。
-
-- ✅ 你可以免费使用、修改、分发本项目的源代码  
-- ❌ 禁止将本项目整体用于未授权商业销售或打包行为  
-- 📎 如果你 fork 本项目并再发布，请保留作者署名与原项目链接
+配置完成后，你就可以在本地开发环境中测试完整的双向同步功能了。
 
 ---
 
@@ -107,20 +114,6 @@ pnpm tauri dev
 - 🐛 Bug 修复 / UI 优化  
 - 📦 PR 或插件机制探索  
 - 📣 推荐给朋友或在社区分享  
-
----
-
-## 👤 关于作者
-
-我是 **创哥**，前字节程序员 & 创业者，正在构建围绕「执行力」打造的产品 [Together]( https://togetheryiqi.com/download/app)。  
-提示词精灵 是我解决自己痛点过程中写下的一个小工具，也许也能帮你节省不少时间。
-
-你可以在以下平台找到我：
-
-- 小红书：[小创作](https://www.xiaohongshu.com/user/profile/58a6796a5e87e77c148a64ae)
-- B站：[小创作小创](https://space.bilibili.com/52807953)
-- GitHub：[github.com/yourname](https://github.com/chriszou)
-- 邮箱：thechriszou@126.com
 
 ---
 

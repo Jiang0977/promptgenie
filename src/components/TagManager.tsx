@@ -6,6 +6,7 @@ import ConfirmDialog from './ConfirmDialog';
 interface TagManagerProps {
   isOpen: boolean;
   onClose: () => void;
+  onTagsChanged: () => void;
 }
 
 const TagManager: React.FC<TagManagerProps> = ({ isOpen, onClose }) => {
@@ -55,6 +56,10 @@ const TagManager: React.FC<TagManagerProps> = ({ isOpen, onClose }) => {
 
   // 开始编辑标签
   const startEditing = (tag: Tag) => {
+    if (!tag.id) {
+      console.error("编辑标签时ID无效:", tag);
+      return;
+    }
     setEditingTagId(tag.id);
     setEditName(tag.name);
     setEditColor(tag.color);
@@ -109,6 +114,10 @@ const TagManager: React.FC<TagManagerProps> = ({ isOpen, onClose }) => {
 
   // 开始删除流程 - 打开确认对话框
   const startDelete = (id: string) => {
+    if (!id) {
+      console.error("删除标签时ID无效:", id);
+      return;
+    }
     console.log("准备删除标签ID:", id);
     setTagToDelete(id);
     setIsConfirmOpen(true);

@@ -6,16 +6,11 @@ use tauri::{
 };
 use tauri_plugin_clipboard_manager;
 use tauri_plugin_sql::{Migration, MigrationKind};
+use tauri_plugin_single_instance;
 
-// 新增：模拟粘贴操作
-#[cfg(target_os = "macos")]
-use std::process::Command as ProcessCommand;
-
-#[cfg(target_os = "windows")]
-use std::process::Command as ProcessCommand;
-
-#[cfg(target_os = "linux")]
-use std::process::Command as ProcessCommand;
+// 飞书同步模块
+mod feishu_sync;
+use feishu_sync::{save_feishu_config, get_feishu_config, check_feishu_config_exists, get_feishu_table_fields, test_feishu_connection, trigger_sync, sync_with_local_data};
 
 // 新增：用于从前端接收菜单项数据的结构体
 #[derive(serde::Deserialize)]
@@ -137,93 +132,6 @@ async fn update_tray_menu<R: Runtime>(
     }
 }
 
-// 新增：模拟粘贴操作（Ctrl+V 或 Cmd+V）
-#[tauri::command]
-async fn simulate_paste() -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        use enigo::{Enigo, Key, KeyboardControllable};
-        let mut enigo = Enigo::new();
-        enigo.key_down(Key::Control);
-        enigo.key_click(Key::Layout('v'));
-        enigo.key_up(Key::Control);
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        // macOS 上使用 osascript 来模拟 Cmd+V
-        let _ = ProcessCommand::new("osascript")
-            .arg("-e")
-            .arg("tell application \"System Events\" to keystroke \"v\" using command down")
-            .output()
-            .map_err(|e| e.to_string())?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        use enigo::{Enigo, Key, KeyboardControllable};
-        let mut enigo = Enigo::new();
-        enigo.key_down(Key::Control);
-        enigo.key_click(Key::Layout('v'));
-        enigo.key_up(Key::Control);
-    }
-
-    Ok(())
-}
-
-// 新增：检查辅助功能权限状态
-#[tauri::command]
-async fn check_accessibility_permission() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        // macOS 上使用 osascript 检查应用是否有辅助功能权限
-        match ProcessCommand::new("osascript")
-            .arg("-e")
-            .arg("tell application \"System Events\" to keystroke \"\"")
-            .output()
-        {
-            Ok(output) => output.status.success(),
-            Err(_) => false,
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        // 其他平台暂时默认为已授权
-        true
-    }
-}
-
-// 新增：打开系统辅助功能设置
-#[tauri::command]
-async fn open_accessibility_settings() -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        // macOS 上打开辅助功能设置页面
-        let _ = ProcessCommand::new("open")
-            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-            .output()
-            .map_err(|e| e.to_string())?;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        // Windows 上打开相关设置页面
-        let _ = ProcessCommand::new("cmd")
-            .args(["/c", "start", "ms-settings:easeofaccess-keyboard"])
-            .output()
-            .map_err(|e| e.to_string())?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        // Linux 上暂时没有标准方法
-        return Err("在此平台上不支持自动打开系统设置".to_string());
-    }
-
-    Ok(())
-}
-
 // 定义插件入口函数
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -235,8 +143,22 @@ pub fn run() {
     }];
 
     let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            println!("检测到第二个实例启动尝试，显示现有窗口");
+            println!("参数: {:?}, 工作目录: {:?}", argv, cwd);
+            
+            // 尝试显示现有的主窗口
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+                println!("已将现有窗口带到前台");
+            } else {
+                println!("警告：找不到主窗口");
+            }
+        }))
         .plugin(
             tauri_plugin_sql::Builder::new()
                 .add_migrations("sqlite:promptgenie.db", migrations)
@@ -245,6 +167,38 @@ pub fn run() {
         .setup(|app| {
             // 初始化数据库目录（如果需要）
             init_db(&app.handle());
+
+            // --- 动态调整窗口大小 ---
+            if let Some(window) = app.get_webview_window("main") {
+                // 获取主显示器的尺寸
+                if let Some(monitor) = window.current_monitor().ok().flatten() {
+                    let monitor_size = monitor.size();
+                    let scale_factor = monitor.scale_factor();
+                    
+                    // 计算实际像素尺寸
+                    let screen_width = (monitor_size.width as f64 / scale_factor) as u32;
+                    let screen_height = (monitor_size.height as f64 / scale_factor) as u32;
+                    
+                    // 计算70%的尺寸
+                    let target_width = (screen_width as f64 * 0.7) as u32;
+                    let target_height = (screen_height as f64 * 0.7) as u32;
+                    
+                    // 应用最小尺寸限制
+                    let min_width = 800;
+                    let min_height = 600;
+                    
+                    let final_width = target_width.max(min_width);
+                    let final_height = target_height.max(min_height);
+                    
+                    // 设置窗口大小
+                    let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                        width: final_width,
+                        height: final_height,
+                    }));
+                    
+                    println!("屏幕尺寸: {}x{}, 窗口尺寸: {}x{}", screen_width, screen_height, final_width, final_height);
+                }
+            }
 
             // --- 托盘初始设置 ---
             let app_handle = app.handle().clone();
@@ -294,17 +248,17 @@ pub fn run() {
                                 return; // 无操作项，如"无记录"
                             }
 
-                            // 把 ID 作为 payload 发送到前端处理
+                            // 把 ID 作为 payload 发送到前端，让前端获取提示词内容并复制到剪贴板
                             let payload = id.to_string();
 
-                            // 发送事件到前端，表示要将此提示词内容直接插入到当前输入框
+                            // 发送事件到前端，表示要将此提示词内容复制到剪贴板
                             if let Some(window) = app_handle_for_event.get_webview_window("main") {
-                                match window.emit("paste-prompt-content", payload) {
+                                match window.emit("copy-prompt-to-clipboard", payload) {
                                     Ok(_) => {
-                                        println!("已发送插入提示词内容事件");
+                                        println!("已发送复制提示词内容到剪贴板事件");
                                     }
                                     Err(e) => {
-                                        eprintln!("发送插入提示词内容事件失败: {}", e);
+                                        eprintln!("发送复制提示词内容到剪贴板事件失败: {}", e);
                                     }
                                 }
                             }
@@ -319,9 +273,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             update_tray_menu,
-            simulate_paste,
-            check_accessibility_permission,
-            open_accessibility_settings
+            save_feishu_config,
+            get_feishu_config,
+            check_feishu_config_exists,
+            get_feishu_table_fields,
+            test_feishu_connection,
+            trigger_sync,
+            sync_with_local_data
         ]);
 
     // 构建应用实例

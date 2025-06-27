@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 // @ts-ignore
-import { FolderIcon, PlusCircleIcon, StarIcon, TagIcon, SettingsIcon, SettingsIcon as CogIcon } from 'lucide-react';
-import { getAllTags, Tag } from '../services/db'; // 引入获取标签的函数和类型
+import { FolderIcon, PlusCircleIcon, StarIcon, TagIcon, SettingsIcon, SettingsIcon as CogIcon, CloudIcon, RefreshCwIcon } from 'lucide-react';
+import { getAllTags, Tag, getAllPrompts, convertPromptToRecord } from '../services/db';
+import { invoke } from '@tauri-apps/api/core';
+import { toast } from 'sonner';
 
 type SidebarProps = {
   onNewPrompt: () => void;
@@ -12,7 +14,10 @@ type SidebarProps = {
   activeFilterMode: 'all' | 'favorites';
   activeTagId: string | null;
   onOpenSettings?: () => void;
+  onRefreshPrompts?: () => void; // 新增：刷新提示词列表的回调
 };
+
+// SyncResult现在从db.ts导入，删除本地定义
 
 // --- 精确的类型定义 ---
 // 基础 Props，所有项目共享
@@ -83,11 +88,16 @@ const Sidebar: React.FC<SidebarProps> = ({
   onTagClick,
   activeFilterMode,
   activeTagId,
-  onOpenSettings
+  onOpenSettings,
+  onRefreshPrompts
 }) => {
   // tags 状态现在包含 count
   const [tags, setTags] = useState<Tag[]>([]);
   const [isLoadingTags, setIsLoadingTags] = useState(true);
+  
+  // 云同步相关状态
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
   // 获取标签数据 - 改为可调用的函数
   const fetchTags = useCallback(async () => {
@@ -102,9 +112,15 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   }, []);
 
-  // 初始加载标签
+  // 初始加载标签和同步状态
   useEffect(() => {
     fetchTags();
+    
+    // 从localStorage加载最后同步时间
+    const savedSyncTime = localStorage.getItem('lastSyncTime');
+    if (savedSyncTime) {
+      setLastSyncTime(savedSyncTime);
+    }
 
     // 添加监听 tauri 事件，当标签数据变更时刷新列表
     const setupListener = async () => {
@@ -136,6 +152,92 @@ const Sidebar: React.FC<SidebarProps> = ({
     fetchTags().then(() => {
       if (onOpenTagManager) onOpenTagManager();
     });
+  };
+
+  // 处理云同步
+  const handleSync = async () => {
+    if (isSyncing) return; // 防止重复点击
+
+    setIsSyncing(true);
+    
+    try {
+      toast.info('开始同步...');
+      
+      // 检查飞书配置是否已设置
+      const configExists = await invoke<boolean>('check_feishu_config_exists');
+      if (!configExists) {
+        throw new Error('飞书配置未设置，请先在设置中配置飞书应用信息');
+      }
+      
+      // 获取本地所有提示词数据
+      const localPrompts = await getAllPrompts();
+      
+      // 转换为后端所需的格式
+      const promptRecords = localPrompts.map(convertPromptToRecord);
+      
+      // 调用带本地数据的同步命令
+      const result = await invoke<{
+        success: boolean;
+        message: string;
+        local_created: number;
+        local_updated: number;
+        remote_created: number;
+        remote_updated: number;
+        total_processed: number;
+      }>('sync_with_local_data', {
+        localPrompts: promptRecords
+      });
+      
+      if (result.success) {
+        // 更新最后同步时间
+        const currentTime = new Date().toLocaleString('zh-CN');
+        setLastSyncTime(currentTime);
+        localStorage.setItem('lastSyncTime', currentTime);
+        
+        // 构建成功消息
+        const statsMessage = [];
+        if (result.local_created > 0) statsMessage.push(`本地新增 ${result.local_created} 条`);
+        if (result.local_updated > 0) statsMessage.push(`本地更新 ${result.local_updated} 条`);
+        if (result.remote_created > 0) statsMessage.push(`云端新增 ${result.remote_created} 条`);
+        if (result.remote_updated > 0) statsMessage.push(`云端更新 ${result.remote_updated} 条`);
+        
+        const successMsg = statsMessage.length > 0 
+          ? `同步成功！${statsMessage.join('，')}`
+          : '同步成功！数据已是最新';
+          
+        toast.success(successMsg);
+        
+        // 刷新提示词列表
+        if (onRefreshPrompts) {
+          onRefreshPrompts();
+        }
+        
+        // 刷新标签列表
+        fetchTags();
+      } else {
+        toast.error(`同步失败：${result.message}`);
+      }
+    } catch (error) {
+      console.error('同步失败:', error);
+      toast.error(`同步失败：${error}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // 格式化最后同步时间显示
+  const formatLastSyncTime = (timeString: string | null) => {
+    if (!timeString) return '从未同步';
+    
+    const syncTime = new Date(timeString);
+    const now = new Date();
+    const diffMs = now.getTime() - syncTime.getTime();
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    
+    if (diffMinutes < 1) return '刚刚同步';
+    if (diffMinutes < 60) return `${diffMinutes}分钟前`;
+    if (diffMinutes < 1440) return `${Math.floor(diffMinutes / 60)}小时前`;
+    return timeString;
   };
 
   return (
@@ -204,7 +306,33 @@ const Sidebar: React.FC<SidebarProps> = ({
         )}
       </nav>
 
-      <div className="p-4 border-t border-gray-200 mt-auto">
+      <div className="p-4 border-t border-gray-200 mt-auto space-y-3">
+        {/* 云同步按钮 */}
+        <div>
+          <button 
+            className={`flex items-center justify-center w-full py-2 px-3 rounded-lg transition-colors duration-150 text-sm font-medium ${
+              isSyncing 
+                ? 'bg-blue-100 text-blue-600 cursor-not-allowed' 
+                : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+            }`}
+            onClick={handleSync}
+            disabled={isSyncing}
+          >
+            {isSyncing ? (
+              <RefreshCwIcon size={16} className="mr-2 animate-spin" />
+            ) : (
+              <CloudIcon size={16} className="mr-2" />
+            )}
+            <span>{isSyncing ? '同步中...' : '云同步'}</span>
+          </button>
+          
+          {/* 最后同步时间 */}
+          <div className="text-xs text-gray-500 text-center mt-1">
+            最后同步：{formatLastSyncTime(lastSyncTime)}
+          </div>
+        </div>
+
+        {/* 设置按钮 */}
         <button className="flex items-center text-gray-600 hover:text-gray-800 transition-colors duration-150 w-full" onClick={onOpenSettings}>
           <SettingsIcon size={18} className="mr-2" />
           <span className="text-sm">设置</span>

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "提示词精灵",
+  "productName": "PromptGenie",
   "version": "0.1.0",
   "identifier": "com.chriszou.promptgenie",
   "build": {
@@ -12,9 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "提示词精灵",
-        "width": 800,
-        "height": 600
+        "fullscreen": false,
+        "height": 700,
+        "resizable": true,
+        "title": "提示词精灵 - PromptGenie",
+        "width": 1000,
+        "minHeight": 600,
+        "minWidth": 800,
+        "center": true
       }
     ],
     "security": {
@@ -23,7 +28,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["msi"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

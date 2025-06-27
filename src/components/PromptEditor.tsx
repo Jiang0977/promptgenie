@@ -1,27 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
 // @ts-ignore
 import { XIcon, TagIcon, PlusIcon } from 'lucide-react';
-import { Tag, PromptInput } from '../services/db';
+import { Tag, Prompt, PromptInput, getAllTags } from '../services/db';
 
 type PromptEditorProps = {
   isOpen: boolean;
-  initialData?: {
-    id?: string;
-    title: string;
-    content: string;
-    tags: Tag[];
-  };
+  promptToEdit?: Prompt | null;
   onClose: () => void;
   onSave: (promptData: PromptInput) => void;
 };
 
 const PromptEditor: React.FC<PromptEditorProps> = ({
   isOpen,
-  initialData = { title: '', content: '', tags: [] },
+  promptToEdit,
   onClose,
-  onSave
+  onSave,
 }) => {
-  const [promptData, setPromptData] = useState(initialData);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [allTags, setAllTags] = useState<Tag[]>([]); // 新增：所有已知标签
+
   const [newTagName, setNewTagName] = useState('');
   const tagInputRef = useRef<HTMLInputElement>(null);
 
@@ -45,14 +44,51 @@ const PromptEditor: React.FC<PromptEditorProps> = ({
     return colorOptions[randomIndex];
   };
 
-  useEffect(() => {
-    setPromptData(initialData);
-    setNewTagName('');
-  }, [initialData]);
+  // 新增：获取所有标签
+  const fetchAllTags = async () => {
+    try {
+      const fetchedTags = await getAllTags();
+      setAllTags(fetchedTags);
+    } catch (error) {
+      console.error('获取标签失败:', error);
+    }
+  };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setPromptData(prev => ({ ...prev, [name]: value }));
+  useEffect(() => {
+    if (isOpen && promptToEdit) {
+      setTitle(promptToEdit.title || '');
+      setContent(promptToEdit.content || '');
+      setTags(promptToEdit.tags || []);
+    } else {
+      setTitle('');
+      setContent('');
+      setTags([]);
+    }
+    setNewTagName('');
+    
+    // 当编辑器打开时获取所有标签
+    if (isOpen) {
+      fetchAllTags();
+    }
+  }, [isOpen, promptToEdit]);
+
+  // 新增：快速添加已有标签
+  const handleQuickAddTag = (tag: Tag) => {
+    // 检查是否已经添加过这个标签
+    const isAlreadyAdded = tags.some(existingTag => 
+      existingTag.id === tag.id || existingTag.name === tag.name
+    );
+    
+    if (!isAlreadyAdded) {
+      setTags(prev => [...prev, tag]);
+    }
+  };
+
+  // 新增：检查标签是否已被选中
+  const isTagSelected = (tag: Tag) => {
+    return tags.some(existingTag => 
+      existingTag.id === tag.id || existingTag.name === tag.name
+    );
   };
 
   const handleAddTag = () => {
@@ -61,14 +97,11 @@ const PromptEditor: React.FC<PromptEditorProps> = ({
     // 创建新标签 (不生成前端 ID)
     const newTag = {
       name: newTagName.trim(),
-      color: getRandomColor()
+      color: getRandomColor(),
     };
 
     // 添加到标签列表 (需要断言类型，因为缺少 id)
-    setPromptData(prev => ({
-      ...prev,
-      tags: [...prev.tags, newTag as Tag] // 断言为 Tag 类型以匹配状态
-    }));
+    setTags(prev => [...prev, newTag as Tag]); // 断言为 Tag 类型以匹配状态
 
     // 清空输入
     setNewTagName('');
@@ -78,18 +111,16 @@ const PromptEditor: React.FC<PromptEditorProps> = ({
   };
 
   const handleRemoveTag = (tagId: string) => {
-    setPromptData(prev => ({
-      ...prev,
-      tags: prev.tags.filter(tag => tag.id !== tagId)
-    }));
+    if (!tagId) return; // 添加安全检查
+    setTags(prev => prev.filter(tag => tag.id && tag.id !== tagId));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave({
-      title: promptData.title,
-      content: promptData.content,
-      tags: promptData.tags
+      title,
+      content,
+      tags,
     });
   };
 
@@ -100,7 +131,7 @@ const PromptEditor: React.FC<PromptEditorProps> = ({
       <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <h2 className="text-xl font-semibold text-gray-800">
-            {initialData.id ? '编辑提示词' : '创建提示词'}
+            {promptToEdit ? '编辑提示词' : '创建提示词'}
           </h2>
           <button
             className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors"
@@ -119,8 +150,8 @@ const PromptEditor: React.FC<PromptEditorProps> = ({
               type="text"
               id="title"
               name="title"
-              value={promptData.title}
-              onChange={handleChange}
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
               className="w-full px-4 py-2 text-gray-800 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-colors"
               placeholder="输入提示词标题..."
               required
@@ -134,8 +165,8 @@ const PromptEditor: React.FC<PromptEditorProps> = ({
             <textarea
               id="content"
               name="content"
-              value={promptData.content}
-              onChange={handleChange}
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
               className="w-full px-4 py-3 text-gray-800 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-colors min-h-[200px] resize-none"
               placeholder="在这里输入提示词内容..."
               required
@@ -173,13 +204,13 @@ const PromptEditor: React.FC<PromptEditorProps> = ({
             </div>
 
             <div className="flex flex-wrap gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg min-h-[44px]">
-              {promptData.tags.length === 0 ? (
+              {tags.length === 0 ? (
                 <div className="text-sm text-gray-400 flex items-center">
                   <TagIcon size={16} className="mr-1" />
                   无标签
                 </div>
               ) : (
-                promptData.tags.map(tag => (
+                tags.map(tag => (
                   <div
                     key={tag.id}
                     className="flex items-center px-3 py-1 rounded-full text-sm"
@@ -201,6 +232,48 @@ const PromptEditor: React.FC<PromptEditorProps> = ({
               )}
             </div>
           </div>
+
+          {/* 新增：快速选择已有标签 */}
+          {allTags.length > 0 && (
+            <div className="mb-5">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                快速选择标签
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {allTags.map(tag => {
+                  const isSelected = isTagSelected(tag);
+                  return (
+                    <button
+                      key={tag.id}
+                      type="button"
+                      onClick={() => handleQuickAddTag(tag)}
+                      disabled={isSelected}
+                      className={`flex items-center px-3 py-1 rounded-full text-sm transition-all ${
+                        isSelected 
+                          ? 'opacity-50 cursor-not-allowed' 
+                          : 'hover:shadow-sm cursor-pointer'
+                      }`}
+                      style={{
+                        backgroundColor: isSelected ? `${tag.color}30` : `${tag.color}15`,
+                        color: tag.color,
+                        border: isSelected ? `1px solid ${tag.color}50` : `1px solid transparent`
+                      }}
+                      title={isSelected ? '已添加此标签' : `点击添加 ${tag.name} 标签`}
+                    >
+                      <TagIcon size={12} className="mr-1" />
+                      {tag.name}
+                      {isSelected && (
+                        <span className="ml-1 text-xs">✓</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                点击标签即可快速添加，已选择的标签将显示勾号
+              </p>
+            </div>
+          )}
         </form>
 
         <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
