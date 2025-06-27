@@ -1,4 +1,4 @@
-# �� 提示词精灵（PromptGenie） - 飞书同步增强版
+# 提示词精灵（PromptGenie） - 飞书同步增强版
 
 > **项目说明**
 > 本仓库 Fork 自 [ChrisZou/promptgenie](https://github.com/ChrisZou/promptgenie)，当前项目地址为 [https://github.com/Jiang0977/promptgenie](https://github.com/Jiang0977/promptgenie)。
@@ -29,10 +29,10 @@
 ## 🖥️ 截图预览
 
 APP主界面
-![](https://cdnw.togetherdaka.com/promptgenie/app/app_main.png)
+![](/public/main.png)
 
-系统状态栏下拉菜单
-![](https://cdnw.togetherdaka.com/promptgenie/app/tray.png)
+
+![](/public/feishu-setting.png)
 
 ---
 
