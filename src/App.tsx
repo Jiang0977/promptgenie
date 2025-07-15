@@ -67,14 +67,9 @@ function App() {
         updateTrayMenu().catch(err => console.error('启动时更新托盘菜单失败:', err));
 
         const { listen } = await import('@tauri-apps/api/event');
-        const unlistenTrayPrompt = await listen('tray-prompt-selected', event => {
-          const promptId = event.payload as string;
-          copyPromptToClipboard(promptId).catch(err =>
-            console.error('处理托盘菜单选择事件时出错:', err)
-          );
-        });
 
-        const unlistenPastePrompt = await listen('paste-prompt-content', async event => {
+
+        const unlistenCopyPrompt = await listen('copy-prompt-to-clipboard', async event => {
           const promptId = event.payload as string;
           try {
             const prompt = await getPrompt(promptId);
@@ -100,7 +95,7 @@ function App() {
             }
             await updatePromptLastUsed(promptId);
           } catch (err) {
-            console.error('粘贴提示词内容时出错:', err);
+            console.error('复制提示词内容时出错:', err);
             toast.error('操作失败，请重试');
           }
         });
@@ -137,8 +132,7 @@ function App() {
         });
 
         return () => {
-          unlistenTrayPrompt();
-          unlistenPastePrompt();
+          unlistenCopyPrompt();
           unlistenSyncCreateLocal();
           unlistenSyncUpdateLocal();
         };
